@@ -1,16 +1,16 @@
-# TodoPro — Full Stack Todo Application
+# TodoPro — Full Stack Todo App
 
-A full-stack todo app with JWT authentication, built with React, Node.js, Express, MongoDB, and Docker.
+A full-stack todo app with JWT auth, built with React, Node.js, Express, MongoDB, and Docker. Nothing fancy, just a solid foundation that works.
 
-## Features
+## What's inside
 
-- User registration and login with JWT
-- Full CRUD for todos (create, edit, delete, mark complete)
+- Sign up / log in with JWT
+- Full CRUD for todos — create, edit, delete, check things off
 - Dark / light mode toggle
-- Responsive UI with Tailwind CSS and Framer Motion animations
-- Docker support for both development and production
+- Responsive UI with Tailwind CSS and some Framer Motion flair
+- Docker support for dev and production
 
-## Project Structure
+## Project layout
 
 ```
 todo-app/
@@ -37,7 +37,7 @@ todo-app/
 └── .env.example
 ```
 
-## Tech Stack
+## Tech stack
 
 | Layer | Tech |
 |-------|------|
@@ -48,7 +48,7 @@ todo-app/
 
 ---
 
-## Quick Start — Docker (Recommended)
+## Getting started — Docker (easiest way)
 
 1. Clone the repo:
    ```bash
@@ -56,49 +56,49 @@ todo-app/
    cd todo-app
    ```
 
-2. Copy and configure the environment file:
+2. Copy the example env file and tweak it if needed:
    ```bash
    cp .env.example .env
    ```
 
-3. Start all services:
+3. Spin everything up:
    ```bash
    docker-compose up -d
    ```
 
-4. Open the app:
+4. Open it up:
    - Frontend: http://localhost:3000
    - Backend API: http://localhost:5001
 
-To stop:
+To shut it down:
 ```bash
 docker-compose down
 ```
 
-To rebuild after code changes:
+After making code changes, rebuild:
 ```bash
 docker-compose up -d --build
 ```
 
-View logs:
+Tail the logs:
 ```bash
 docker-compose logs -f
 ```
 
 ---
 
-## Local Development (without Docker)
+## Running locally (no Docker)
 
 ### Backend
 
 ```bash
 cd Backend
 npm install
-cp .env.example .env   # then edit .env
+cp .env.example .env   # then fill in your values
 npm run dev
 ```
 
-Required `.env` values:
+Your `.env` needs these:
 
 ```env
 PORT=5001
@@ -107,7 +107,7 @@ CLIENT_URL=http://localhost:3000
 JWT_SECRET=your-super-secret-key-change-in-production
 ```
 
-Server starts at http://localhost:5001. If you don't have MongoDB installed locally, you can spin up just the DB container:
+Server runs at http://localhost:5001. No local MongoDB? Just spin up the container for it:
 
 ```bash
 docker run -d -p 27017:27017 --name todo-mongo mongo:7
@@ -128,13 +128,13 @@ Optional `.env` value:
 REACT_APP_API_URL=http://localhost:5001/api
 ```
 
-Dev server starts at http://localhost:3000.
+Dev server runs at http://localhost:3000.
 
 ---
 
-## Environment Variables
+## Environment variables
 
-### Root `.env` — used by Docker Compose
+### Root `.env` — picked up by Docker Compose
 
 ```env
 PORT=5001
@@ -144,7 +144,7 @@ JWT_SECRET=your-super-secret-key-change-in-production
 REACT_APP_API_URL=http://localhost:5001/api
 ```
 
-### Backend `.env` — used for local development only
+### Backend `.env` — for local dev only
 
 ```env
 PORT=5001
@@ -153,7 +153,7 @@ CLIENT_URL=http://localhost:3000
 JWT_SECRET=your-super-secret-key-change-in-production
 ```
 
-### Frontend `.env` — used for local development only
+### Frontend `.env` — for local dev only
 
 ```env
 REACT_APP_API_URL=http://localhost:5001/api
@@ -161,23 +161,23 @@ REACT_APP_API_URL=http://localhost:5001/api
 
 ---
 
-## API Endpoints
+## API endpoints
 
 ### Auth — `/api/auth`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/register` | Register a new user |
-| POST | `/login` | Login and receive a JWT |
+| POST | `/register` | Create a new account |
+| POST | `/login` | Log in and get a JWT back |
 
-### Todos — `/api/todos` (all require `Authorization: Bearer <token>`)
+### Todos — `/api/todos` (needs `Authorization: Bearer <token>`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/get` | Get all todos for the logged-in user |
-| POST | `/create` | Create a new todo |
+| GET | `/get` | Fetch all your todos |
+| POST | `/create` | Add a new todo |
 | PUT | `/edit/:id` | Update a todo |
-| DELETE | `/delete/:id` | Delete a todo |
+| DELETE | `/delete/:id` | Remove a todo |
 
 ---
 
