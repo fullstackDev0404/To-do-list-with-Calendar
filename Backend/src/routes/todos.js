@@ -7,7 +7,7 @@ router.get("/get", auth, async(req,res)=>{
   try {
     const filter = { user: req.user.id }
     if (req.query.date) filter.date = req.query.date
-    const todos = await Todo.find(filter).sort({ timeFrom: 1 })
+    const todos = await Todo.find(filter).sort({ order: 1, timeFrom: 1 })
     res.json(todos)
   } catch(err) {
     console.error("[GET /todos]", err)
@@ -91,6 +91,28 @@ router.put("/edit/:id", auth, async(req,res)=>{
   } catch(err) {
     console.error("[PUT /todos/edit]", err)
     res.status(500).json({ message: "Failed to update todo" })
+  }
+})
+
+// Bulk reorder — receives [{id, order}, ...] and updates all at once
+router.put("/reorder", auth, async(req,res)=>{
+  try {
+    const { items } = req.body // [{ id: string, order: number }]
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ message: "items must be an array" })
+    }
+    await Promise.all(
+      items.map(({ id, order }) =>
+        Todo.updateOne(
+          { _id: id, user: req.user.id },
+          { $set: { order } }
+        )
+      )
+    )
+    res.json({ message: "Reordered" })
+  } catch(err) {
+    console.error("[PUT /todos/reorder]", err)
+    res.status(500).json({ message: "Failed to reorder todos" })
   }
 })
 
