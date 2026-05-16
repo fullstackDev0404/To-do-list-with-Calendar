@@ -1,14 +1,16 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
 import {
   LuPlus, LuClock, LuTrash2, LuPencil, LuCheck,
-  LuLayoutGrid, LuCalendarDays, LuCircleCheck, LuCircleDashed, LuFlag, LuTag, LuX,
+  LuLayoutGrid, LuCalendarDays, LuCircleCheck, LuCircleDashed,
+  LuFlag, LuTag, LuX, LuGripVertical, LuTimer, LuFlame, LuTriangleAlert,
 } from "react-icons/lu";
 import Calendar from "../components/Calendar";
 import TodoModal, { tagColor } from "../components/TodoModal";
-import { fetchTodos, deleteTodo, updateTodo } from "../api/todoApi";
+import PomodoroTimer from "../components/PomodoroTimer";
+import { fetchTodos, deleteTodo, updateTodo, reorderTodos } from "../api/todoApi";
 
 const PRIORITY_STYLES = {
   high:   { dark: "text-red-400 bg-red-500/10 border-red-500/25",       light: "text-red-600 bg-red-50 border-red-200"       },
@@ -29,13 +31,248 @@ const formatDisplayDate = (dateStr) => {
   });
 };
 
+const isOverdue = (todo) => {
+  if (todo.completed) return false;
+  const today = todayStr();
+  if (todo.date < today) return true;
+  if (todo.date === today && todo.timeTo) {
+    const now = new Date();
+    const [h, m] = todo.timeTo.split(":").map(Number);
+    return now.getHours() > h || (now.getHours() === h && now.getMinutes() > m);
+  }
+  return false;
+};
+
+const fmtMins = (m) => {
+  if (!m) return null;
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60 > 0 ? `${m % 60}m` : ""}`.trim();
+};
+
+// ── Request notification permission once ──────────────────────────────────
+function useNotificationPermission() {
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+}
+
+// ── Schedule reminders for today's todos ─────────────────────────────────
+function useReminders(todos) {
+  const scheduled = useRef(new Set());
+  useEffect(() => {
+    if (Notification.permission !== "granted") return;
+    const today = todayStr();
+    todos.forEach((t) => {
+      if (!t.reminderAt || t.completed || t.date !== today) return;
+      const key = `${t._id}-${t.reminderAt}`;
+      if (scheduled.current.has(key)) return;
+      const [h, m] = t.reminderAt.split(":").map(Number);
+      const fireAt = new Date();
+      fireAt.setHours(h, m, 0, 0);
+      const ms = fireAt - Date.now();
+      if (ms > 0) {
+        scheduled.current.add(key);
+        setTimeout(() => {
+          new Notification(`⏰ Reminder: ${t.title}`, {
+            body: t.description || t.date,
+            icon: "/favicon.ico",
+          });
+        }, ms);
+      }
+    });
+  }, [todos]);
+}
+
+// ── Single draggable task row ─────────────────────────────────────────────
+function TaskRow({ todo, darkMode, textPri, textMuted, divider, activeTag, setActiveTag,
+                   onToggle, onEdit, onDelete, onStartPomodoro }) {
+  const dragControls = useDragControls();
+  const overdue = isOverdue(todo);
+  const p  = todo.priority;
+  const ps = PRIORITY_STYLES[p] || PRIORITY_STYLES.medium;
+
+  const loggedPct = todo.estimatedMinutes > 0
+    ? Math.min(100, Math.round((todo.loggedMinutes || 0) / todo.estimatedMinutes * 100))
+    : null;
+
+  return (
+    <Reorder.Item
+      value={todo}
+      dragListener={false}
+      dragControls={dragControls}
+      as="div"
+      className={`flex items-start gap-3.5 px-5 py-4 group transition-colors duration-150 ${
+        overdue
+          ? darkMode ? "bg-red-500/[0.04] hover:bg-red-500/[0.07]" : "bg-red-50/60 hover:bg-red-50"
+          : darkMode ? "hover:bg-white/[0.03]" : "hover:bg-black/[0.015]"
+      }`}
+      style={{ borderBottom: `1px solid ${divider}` }}
+      whileDrag={{
+        scale: 1.02,
+        boxShadow: darkMode ? "0 8px 32px rgba(0,0,0,0.6)" : "0 8px 32px rgba(0,0,0,0.15)",
+        zIndex: 50,
+        cursor: "grabbing",
+      }}
+    >
+      {/* Drag handle */}
+      <button
+        className={`mt-1 flex-shrink-0 cursor-grab active:cursor-grabbing touch-none transition-opacity opacity-0 group-hover:opacity-100 ${
+          darkMode ? "text-gray-700 hover:text-gray-400" : "text-gray-300 hover:text-gray-500"
+        }`}
+        onPointerDown={(e) => dragControls.start(e)}
+        aria-label="Drag to reorder"
+      >
+        <LuGripVertical size={16} />
+      </button>
+
+      {/* Toggle */}
+      <button
+        onClick={() => onToggle(todo)}
+        className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
+          todo.completed
+            ? "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/40"
+            : overdue
+            ? "border-red-500 hover:border-red-400"
+            : darkMode ? "border-gray-600 hover:border-sky-400" : "border-gray-300 hover:border-sky-400"
+        }`}
+      >
+        {todo.completed && <LuCheck size={11} strokeWidth={3} className="text-white" />}
+      </button>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className={`text-base font-medium leading-snug ${
+            todo.completed
+              ? `line-through ${darkMode ? "text-gray-600" : "text-gray-400"}`
+              : overdue ? (darkMode ? "text-red-400" : "text-red-600")
+              : textPri
+          }`}>
+            {todo.title}
+          </p>
+          {/* Overdue badge */}
+          {overdue && (
+            <span className={`inline-flex items-center gap-1 text-xs font-semibold ${darkMode ? "text-red-400" : "text-red-500"}`}>
+              <LuTriangleAlert size={12} /> Overdue
+            </span>
+          )}
+          {/* Streak badge */}
+          {(todo.streak || 0) >= 2 && (
+            <span className={`inline-flex items-center gap-0.5 text-xs font-bold ${darkMode ? "text-orange-400" : "text-orange-500"}`}>
+              <LuFlame size={12} />{todo.streak}
+            </span>
+          )}
+        </div>
+
+        {todo.description && (
+          <p className={`text-sm mt-1 truncate ${textMuted}`}>{todo.description}</p>
+        )}
+
+        {(todo.timeFrom || todo.timeTo) && (
+          <span className={`inline-flex items-center gap-1.5 text-sm mt-1.5 font-medium ${
+            darkMode ? "text-sky-400/70" : "text-sky-500"
+          }`}>
+            <LuClock size={13} />
+            {todo.timeFrom && todo.timeTo
+              ? `${todo.timeFrom} – ${todo.timeTo}`
+              : todo.timeFrom ? `From ${todo.timeFrom}` : `Until ${todo.timeTo}`}
+          </span>
+        )}
+
+        {/* Time tracking bar */}
+        {todo.estimatedMinutes > 0 && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className={`flex-1 h-1 rounded-full overflow-hidden ${darkMode ? "bg-white/10" : "bg-gray-200"}`}>
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  loggedPct >= 100 ? "bg-emerald-500" : loggedPct >= 75 ? "bg-amber-400" : "bg-sky-500"
+                }`}
+                style={{ width: `${loggedPct ?? 0}%` }}
+              />
+            </div>
+            <span className={`text-xs font-medium whitespace-nowrap ${textMuted}`}>
+              {fmtMins(todo.loggedMinutes || 0)} / {fmtMins(todo.estimatedMinutes)}
+            </span>
+          </div>
+        )}
+
+        {/* Tag chips */}
+        {(todo.tags || []).length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1.5">
+            {todo.tags.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium border transition-all duration-150 ${tagColor(tag, darkMode)} ${
+                  activeTag === tag ? "ring-1 ring-current ring-offset-0" : "opacity-80 hover:opacity-100"
+                }`}
+              >
+                #{tag}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Priority badge */}
+      {p && !todo.completed && (
+        <span className={`flex-shrink-0 self-start mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${darkMode ? ps.dark : ps.light}`}>
+          <LuFlag size={10} />
+          {p.charAt(0).toUpperCase() + p.slice(1)}
+        </span>
+      )}
+
+      {/* Actions */}
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+        {!todo.completed && (
+          <button
+            onClick={() => onStartPomodoro(todo)}
+            className={`p-2 rounded-lg transition-colors ${
+              darkMode ? "text-gray-600 hover:text-violet-400 hover:bg-violet-400/10" : "text-gray-400 hover:text-violet-600 hover:bg-violet-50"
+            }`}
+            title="Start Pomodoro"
+          >
+            <LuTimer size={15} />
+          </button>
+        )}
+        <button
+          onClick={() => onEdit(todo)}
+          className={`p-2 rounded-lg transition-colors ${
+            darkMode ? "text-gray-600 hover:text-gray-200 hover:bg-white/10" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+          }`}
+        >
+          <LuPencil size={15} />
+        </button>
+        <button
+          onClick={() => onDelete(todo._id)}
+          className={`p-2 rounded-lg transition-colors ${
+            darkMode ? "text-gray-600 hover:text-red-400 hover:bg-red-400/10" : "text-gray-400 hover:text-red-500 hover:bg-red-50"
+          }`}
+        >
+          <LuTrash2 size={15} />
+        </button>
+      </div>
+    </Reorder.Item>
+  );
+}
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
 export default function Dashboard({ darkMode = true }) {
   const navigate = useNavigate();
   const [allTodos,     setAllTodos]     = useState([]);
   const [selectedDate, setSelectedDate] = useState(todayStr());
   const [modalOpen,    setModalOpen]    = useState(false);
   const [editingTodo,  setEditingTodo]  = useState(null);
-  const [activeTag,    setActiveTag]    = useState(null); // tag filter
+  const [activeTag,    setActiveTag]    = useState(null);
+  const [orderedDay,   setOrderedDay]   = useState([]);
+  const [pomodoroTodo, setPomodoroTodo] = useState(null);
+  const saveTimer = useRef(null);
+
+  useNotificationPermission();
+  useReminders(allTodos);
 
   const isLoggedIn = () =>
     !!(localStorage.getItem("token") || sessionStorage.getItem("token"));
@@ -50,30 +287,51 @@ export default function Dashboard({ darkMode = true }) {
     loadTodos();
   }, [navigate, loadTodos]);
 
-  // All unique tags across every todo (for suggestions + filter bar)
-  const allTags = [...new Set(allTodos.flatMap((t) => t.tags || []))].sort();
+  useEffect(() => {
+    const day = allTodos
+      .filter((t) => t.date === selectedDate)
+      .filter((t) => !activeTag || (t.tags || []).includes(activeTag))
+      .sort((a, b) => {
+        if (a.order !== b.order) return (a.order ?? 0) - (b.order ?? 0);
+        if (!a.timeFrom && !b.timeFrom) return 0;
+        if (!a.timeFrom) return 1;
+        if (!b.timeFrom) return -1;
+        return a.timeFrom.localeCompare(b.timeFrom);
+      });
+    setOrderedDay(day);
+  }, [allTodos, selectedDate, activeTag]);
 
-  // Tags that appear on the selected day (for the filter bar)
+  const handleReorder = (newOrder) => {
+    setOrderedDay(newOrder);
+    setAllTodos((prev) => {
+      const updated = [...prev];
+      newOrder.forEach((t, i) => {
+        const idx = updated.findIndex((x) => x._id === t._id);
+        if (idx !== -1) updated[idx] = { ...updated[idx], order: i };
+      });
+      return updated;
+    });
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(async () => {
+      try { await reorderTodos(newOrder.map((t, i) => ({ id: t._id, order: i }))); }
+      catch { toast.error("Couldn't save order"); }
+    }, 600);
+  };
+
+  const allTags   = [...new Set(allTodos.flatMap((t) => t.tags || []))].sort();
   const dayTagSet = [...new Set(
     allTodos.filter((t) => t.date === selectedDate).flatMap((t) => t.tags || [])
   )].sort();
-
-  const dayTodos = allTodos
-    .filter((t) => t.date === selectedDate)
-    .filter((t) => !activeTag || (t.tags || []).includes(activeTag))
-    .sort((a, b) => {
-      if (!a.timeFrom && !b.timeFrom) return 0;
-      if (!a.timeFrom) return 1;
-      if (!b.timeFrom) return -1;
-      return a.timeFrom.localeCompare(b.timeFrom);
-    });
-
   const todoDates = [...new Set(allTodos.map((t) => t.date))];
+
+  // Count overdue tasks for the stats area
+  const overdueCount = allTodos.filter(isOverdue).length;
 
   const handleDelete = async (id) => {
     try {
       await deleteTodo(id);
       setAllTodos((p) => p.filter((t) => t._id !== id));
+      if (pomodoroTodo?._id === id) setPomodoroTodo(null);
       toast.success("Removed");
     } catch (err) {
       toast.error(err.response?.data?.message || "Delete failed");
@@ -84,28 +342,33 @@ export default function Dashboard({ darkMode = true }) {
     try {
       const updated = await updateTodo(todo._id, { ...todo, completed: !todo.completed });
       setAllTodos((p) => p.map((t) => (t._id === updated._id ? updated : t)));
+      if (updated.completed && (updated.streak || 0) >= 2) {
+        toast.success(`🔥 ${updated.streak}-day streak!`);
+      }
     } catch { toast.error("Update failed"); }
+  };
+
+  // Called by PomodoroTimer when it logs time
+  const handleTimeLogged = (updated) => {
+    setAllTodos((p) => p.map((t) => (t._id === updated._id ? updated : t)));
+    setPomodoroTodo(updated);
   };
 
   const openCreate = () => { setEditingTodo(null); setModalOpen(true); };
   const openEdit   = (t) => { setEditingTodo(t);   setModalOpen(true); };
-
-  // Clear tag filter when date changes
   const handleSelectDate = (d) => { setSelectedDate(d); setActiveTag(null); };
 
-  const today = todayStr();
-
+  const today     = todayStr();
   const textPri   = darkMode ? "text-white"    : "text-gray-900";
   const textMuted = darkMode ? "text-gray-500" : "text-gray-400";
   const textSub   = darkMode ? "text-gray-400" : "text-gray-500";
-  const rowHover  = darkMode ? "hover:bg-white/[0.03]" : "hover:bg-black/[0.015]";
   const divider   = darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)";
 
   const stats = [
     { label: "Total",   value: allTodos.length,                                 icon: LuLayoutGrid,   color: "text-sky-400",     glow: "shadow-sky-400/20"     },
     { label: "Today",   value: allTodos.filter((t) => t.date === today).length,  icon: LuCalendarDays, color: "text-violet-400",  glow: "shadow-violet-400/20"  },
     { label: "Done",    value: allTodos.filter((t) => t.completed).length,       icon: LuCircleCheck,  color: "text-emerald-400", glow: "shadow-emerald-400/20" },
-    { label: "Pending", value: allTodos.filter((t) => !t.completed).length,      icon: LuCircleDashed, color: "text-amber-400",   glow: "shadow-amber-400/20"   },
+    { label: "Overdue", value: overdueCount,                                     icon: LuTriangleAlert,  color: overdueCount > 0 ? "text-red-400" : "text-gray-500", glow: overdueCount > 0 ? "shadow-red-400/20" : "" },
   ];
 
   return (
@@ -114,7 +377,6 @@ export default function Dashboard({ darkMode = true }) {
 
         {/* ── LEFT ── */}
         <div className="md:w-[330px] flex-shrink-0 flex flex-col gap-4">
-
           <Calendar
             selectedDate={selectedDate}
             onSelectDate={handleSelectDate}
@@ -143,7 +405,7 @@ export default function Dashboard({ darkMode = true }) {
             </div>
           </div>
 
-          {/* All-tags sidebar (shows when there are tags across all todos) */}
+          {/* All-tags sidebar */}
           {allTags.length > 0 && (
             <div className={`rounded-2xl p-5 ${darkMode ? "card-3d-dark" : "card-3d-light"}`}>
               <p className={`text-xs font-bold uppercase tracking-[0.12em] mb-3 ${textMuted}`}>
@@ -154,7 +416,7 @@ export default function Dashboard({ darkMode = true }) {
                   <button
                     key={tag}
                     type="button"
-                    onClick={() => { handleSelectDate(selectedDate); setActiveTag(activeTag === tag ? null : tag); }}
+                    onClick={() => setActiveTag(activeTag === tag ? null : tag)}
                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border transition-all duration-150 ${
                       activeTag === tag
                         ? tagColor(tag, darkMode)
@@ -181,9 +443,9 @@ export default function Dashboard({ darkMode = true }) {
                 {formatDisplayDate(selectedDate)}
               </h2>
               <p className={`text-sm mt-1 ${textSub}`}>
-                {dayTodos.length === 0
+                {orderedDay.length === 0
                   ? activeTag ? `No tasks tagged #${activeTag} today` : "Nothing planned — enjoy the quiet ☕"
-                  : `${dayTodos.length} task${dayTodos.length === 1 ? "" : "s"} · ${dayTodos.filter((t) => t.completed).length} done`}
+                  : `${orderedDay.length} task${orderedDay.length === 1 ? "" : "s"} · ${orderedDay.filter((t) => t.completed).length} done`}
               </p>
             </div>
             <button
@@ -195,7 +457,7 @@ export default function Dashboard({ darkMode = true }) {
             </button>
           </div>
 
-          {/* Tag filter bar — only shown when this day has tags */}
+          {/* Tag filter bar */}
           {dayTagSet.length > 0 && (
             <div className="flex items-center gap-2 mb-3 flex-wrap">
               <LuTag size={13} className={textMuted} />
@@ -231,7 +493,7 @@ export default function Dashboard({ darkMode = true }) {
 
           {/* Task list */}
           <div className={`flex-1 rounded-2xl overflow-hidden ${darkMode ? "card-3d-dark" : "card-3d-light"}`}>
-            {dayTodos.length === 0 ? (
+            {orderedDay.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-60 gap-3 select-none">
                 <span className="text-5xl">{activeTag ? "🏷️" : "🌿"}</span>
                 <p className={`text-base font-medium ${textMuted}`}>
@@ -251,115 +513,38 @@ export default function Dashboard({ darkMode = true }) {
                 )}
               </div>
             ) : (
-              <AnimatePresence initial={false}>
-                {dayTodos.map((todo, i) => (
-                  <motion.div
-                    key={todo._id}
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, height: 0 }}
-                    transition={{ duration: 0.18, delay: i * 0.025 }}
-                    className={`flex items-start gap-3.5 px-5 py-4 group transition-colors duration-150 ${rowHover}`}
-                    style={{ borderBottom: `1px solid ${divider}` }}
-                  >
-                    {/* Toggle */}
-                    <button
-                      onClick={() => handleToggle(todo)}
-                      className={`mt-0.5 flex-shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all duration-200 ${
-                        todo.completed
-                          ? "bg-emerald-500 border-emerald-500 shadow-sm shadow-emerald-500/40"
-                          : darkMode
-                          ? "border-gray-600 hover:border-sky-400"
-                          : "border-gray-300 hover:border-sky-400"
-                      }`}
-                    >
-                      {todo.completed && <LuCheck size={11} strokeWidth={3} className="text-white" />}
-                    </button>
-
-                    {/* Content */}
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-base font-medium leading-snug ${
-                        todo.completed
-                          ? `line-through ${darkMode ? "text-gray-600" : "text-gray-400"}`
-                          : textPri
-                      }`}>
-                        {todo.title}
-                      </p>
-                      {todo.description && (
-                        <p className={`text-sm mt-1 truncate ${textMuted}`}>{todo.description}</p>
-                      )}
-                      {(todo.timeFrom || todo.timeTo) && (
-                        <span className={`inline-flex items-center gap-1.5 text-sm mt-1.5 font-medium ${
-                          darkMode ? "text-sky-400/70" : "text-sky-500"
-                        }`}>
-                          <LuClock size={13} />
-                          {todo.timeFrom && todo.timeTo
-                            ? `${todo.timeFrom} – ${todo.timeTo}`
-                            : todo.timeFrom ? `From ${todo.timeFrom}` : `Until ${todo.timeTo}`}
-                        </span>
-                      )}
-                      {/* Tag chips on the task row */}
-                      {(todo.tags || []).length > 0 && (
-                        <div className="flex flex-wrap gap-1 mt-1.5">
-                          {todo.tags.map((tag) => (
-                            <button
-                              key={tag}
-                              type="button"
-                              onClick={() => setActiveTag(activeTag === tag ? null : tag)}
-                              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-xs font-medium border transition-all duration-150 ${tagColor(tag, darkMode)} ${
-                                activeTag === tag ? "ring-1 ring-current ring-offset-0" : "opacity-80 hover:opacity-100"
-                              }`}
-                            >
-                              #{tag}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Priority badge */}
-                    {todo.priority && !todo.completed && (() => {
-                      const p = todo.priority;
-                      const s = PRIORITY_STYLES[p] || PRIORITY_STYLES.medium;
-                      return (
-                        <span className={`flex-shrink-0 self-start mt-0.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold border ${darkMode ? s.dark : s.light}`}>
-                          <LuFlag size={10} />
-                          {p.charAt(0).toUpperCase() + p.slice(1)}
-                        </span>
-                      );
-                    })()}
-
-                    {/* Actions */}
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-                      <button
-                        onClick={() => openEdit(todo)}
-                        className={`p-2 rounded-lg transition-colors ${
-                          darkMode
-                            ? "text-gray-600 hover:text-gray-200 hover:bg-white/10"
-                            : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
-                        }`}
-                      >
-                        <LuPencil size={15} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(todo._id)}
-                        className={`p-2 rounded-lg transition-colors ${
-                          darkMode
-                            ? "text-gray-600 hover:text-red-400 hover:bg-red-400/10"
-                            : "text-gray-400 hover:text-red-500 hover:bg-red-50"
-                        }`}
-                      >
-                        <LuTrash2 size={15} />
-                      </button>
-                    </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
+              <Reorder.Group
+                axis="y"
+                values={orderedDay}
+                onReorder={handleReorder}
+                as="div"
+                className="outline-none"
+              >
+                <AnimatePresence initial={false}>
+                  {orderedDay.map((todo) => (
+                    <TaskRow
+                      key={todo._id}
+                      todo={todo}
+                      darkMode={darkMode}
+                      textPri={textPri}
+                      textMuted={textMuted}
+                      divider={divider}
+                      activeTag={activeTag}
+                      setActiveTag={setActiveTag}
+                      onToggle={handleToggle}
+                      onEdit={openEdit}
+                      onDelete={handleDelete}
+                      onStartPomodoro={setPomodoroTodo}
+                    />
+                  ))}
+                </AnimatePresence>
+              </Reorder.Group>
             )}
           </div>
         </div>
       </div>
 
+      {/* Modals */}
       {modalOpen && (
         <TodoModal
           closeModal={() => setModalOpen(false)}
@@ -370,6 +555,19 @@ export default function Dashboard({ darkMode = true }) {
           allTags={allTags}
         />
       )}
+
+      {/* Pomodoro timer */}
+      <AnimatePresence>
+        {pomodoroTodo && (
+          <PomodoroTimer
+            key={pomodoroTodo._id}
+            todo={pomodoroTodo}
+            darkMode={darkMode}
+            onClose={() => setPomodoroTodo(null)}
+            onTimeLogged={handleTimeLogged}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

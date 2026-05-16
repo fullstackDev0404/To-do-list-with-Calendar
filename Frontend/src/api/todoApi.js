@@ -19,3 +19,13 @@ export const deleteTodo = async(id)=>{
   const res = await API.delete(`/todos/delete/${id}`)
   return res.data
 }
+
+export const reorderTodos = async(items)=>{
+  const res = await API.put("/todos/reorder", { items })
+  return res.data
+}
+
+export const logTime = async(id, minutes)=>{
+  const res = await API.patch(`/todos/log-time/${id}`, { minutes })
+  return res.data
+}

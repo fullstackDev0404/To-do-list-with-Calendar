@@ -17,7 +17,8 @@ router.get("/get", auth, async(req,res)=>{
 
 router.post("/create", auth, async(req,res)=>{
   try {
-    const { title, description, date, timeFrom, timeTo, completed, priority, tags } = req.body
+    const { title, description, date, timeFrom, timeTo, completed, priority, tags,
+            estimatedMinutes, reminderAt } = req.body
 
     if (!title || !title.trim()) {
       return res.status(400).json({ message: "Title is required" })
@@ -39,7 +40,9 @@ router.post("/create", auth, async(req,res)=>{
       timeTo: timeTo || "",
       completed: !!completed,
       priority: ["low","medium","high"].includes(priority) ? priority : "medium",
-      tags: sanitizedTags
+      tags: sanitizedTags,
+      estimatedMinutes: Number(estimatedMinutes) || 0,
+      reminderAt: reminderAt || ""
     })
 
     res.status(201).json(todo)
@@ -55,7 +58,8 @@ router.put("/edit/:id", auth, async(req,res)=>{
       return res.status(400).json({ message: "Invalid todo ID" })
     }
 
-    const { title, description, date, timeFrom, timeTo, completed, priority, tags } = req.body
+    const { title, description, date, timeFrom, timeTo, completed, priority, tags,
+            estimatedMinutes, reminderAt } = req.body
 
     if (!title || !title.trim()) {
       return res.status(400).json({ message: "Title is required" })
@@ -68,6 +72,21 @@ router.put("/edit/:id", auth, async(req,res)=>{
       ? tags.map(t => t.trim().toLowerCase()).filter(Boolean).slice(0, 10)
       : []
 
+    // Streak logic: if marking complete, check if it was done yesterday
+    let streakUpdate = {}
+    if (completed) {
+      const existing = await Todo.findOne({ _id: req.params.id, user: req.user.id })
+      if (existing && !existing.completed) {
+        const today = new Date().toISOString().slice(0, 10)
+        const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10)
+        const last = existing.lastCompletedDate
+        const newStreak = (last === yesterday || last === today)
+          ? (existing.streak || 0) + 1
+          : 1
+        streakUpdate = { streak: newStreak, lastCompletedDate: today }
+      }
+    }
+
     const todo = await Todo.findOneAndUpdate(
       { _id: req.params.id, user: req.user.id },
       {
@@ -78,7 +97,10 @@ router.put("/edit/:id", auth, async(req,res)=>{
         timeTo: timeTo || "",
         completed: !!completed,
         priority: ["low","medium","high"].includes(priority) ? priority : "medium",
-        tags: sanitizedTags
+        tags: sanitizedTags,
+        estimatedMinutes: Number(estimatedMinutes) || 0,
+        reminderAt: reminderAt || "",
+        ...streakUpdate
       },
       { new: true }
     )
@@ -113,6 +135,29 @@ router.put("/reorder", auth, async(req,res)=>{
   } catch(err) {
     console.error("[PUT /todos/reorder]", err)
     res.status(500).json({ message: "Failed to reorder todos" })
+  }
+})
+
+// Log time spent on a task (adds minutes to loggedMinutes)
+router.patch("/log-time/:id", auth, async(req,res)=>{
+  try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: "Invalid todo ID" })
+    }
+    const { minutes } = req.body
+    if (typeof minutes !== "number" || minutes <= 0) {
+      return res.status(400).json({ message: "minutes must be a positive number" })
+    }
+    const todo = await Todo.findOneAndUpdate(
+      { _id: req.params.id, user: req.user.id },
+      { $inc: { loggedMinutes: minutes } },
+      { new: true }
+    )
+    if (!todo) return res.status(404).json({ message: "Todo not found" })
+    res.json(todo)
+  } catch(err) {
+    console.error("[PATCH /todos/log-time]", err)
+    res.status(500).json({ message: "Failed to log time" })
   }
 })
 

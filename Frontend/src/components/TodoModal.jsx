@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-toastify";
-import { LuX, LuCheck, LuFlag, LuTag } from "react-icons/lu";
+import { LuX, LuCheck, LuFlag, LuTag, LuClock, LuBell } from "react-icons/lu";
 import { createTodo, updateTodo } from "../api/todoApi";
 
 const PRIORITIES = [
@@ -36,6 +36,8 @@ export default function TodoModal({ closeModal, editingTodo, setTodos, defaultDa
   const [tags,        setTags]        = useState([]);
   const [tagInput,    setTagInput]    = useState("");
   const [showSuggest, setShowSuggest] = useState(false);
+  const [estimatedMinutes, setEstimatedMinutes] = useState("");
+  const [reminderAt,  setReminderAt]  = useState("");
   const tagRef = useRef(null);
 
   useEffect(() => {
@@ -48,6 +50,8 @@ export default function TodoModal({ closeModal, editingTodo, setTodos, defaultDa
       setCompleted(editingTodo.completed);
       setPriority(editingTodo.priority || "medium");
       setTags(editingTodo.tags || []);
+      setEstimatedMinutes(editingTodo.estimatedMinutes || "");
+      setReminderAt(editingTodo.reminderAt || "");
     } else {
       setTitle(""); setDescription("");
       setDate(defaultDate || "");
@@ -55,6 +59,8 @@ export default function TodoModal({ closeModal, editingTodo, setTodos, defaultDa
       setCompleted(false);
       setPriority("medium");
       setTags([]);
+      setEstimatedMinutes("");
+      setReminderAt("");
     }
     setTagInput("");
   }, [editingTodo, defaultDate]);
@@ -98,7 +104,8 @@ export default function TodoModal({ closeModal, editingTodo, setTodos, defaultDa
       : tags;
 
     try {
-      const payload = { title: title.trim(), description: description.trim(), date, timeFrom, timeTo, completed, priority, tags: finalTags };
+      const payload = { title: title.trim(), description: description.trim(), date, timeFrom, timeTo, completed, priority, tags: finalTags,
+        estimatedMinutes: Number(estimatedMinutes) || 0, reminderAt };
       if (editingTodo) {
         const updated = await updateTodo(editingTodo._id, payload);
         setTodos((p) => p.map((t) => (t._id === updated._id ? updated : t)));
@@ -319,6 +326,35 @@ export default function TodoModal({ closeModal, editingTodo, setTodos, defaultDa
                 rows={3}
                 className={`${inputCls} resize-none`}
               />
+            </div>
+
+            {/* Estimated time + Reminder */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls}>
+                  <span className="flex items-center gap-1.5"><LuClock size={11} />Est. time (min)</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="480"
+                  value={estimatedMinutes}
+                  onChange={(e) => setEstimatedMinutes(e.target.value)}
+                  placeholder="e.g. 30"
+                  className={inputCls}
+                />
+              </div>
+              <div>
+                <label className={labelCls}>
+                  <span className="flex items-center gap-1.5"><LuBell size={11} />Reminder</span>
+                </label>
+                <input
+                  type="time"
+                  value={reminderAt}
+                  onChange={(e) => setReminderAt(e.target.value)}
+                  className={inputCls}
+                />
+              </div>
             </div>
 
             {/* Completed */}
